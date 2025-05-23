@@ -6,7 +6,7 @@ Version: 2.3.17 r
 
 use std::io;
 use rand::rngs::OsRng;
-use rand::RngCore;
+use rand_core::TryRngCore;
 
 
 
@@ -51,16 +51,18 @@ impl ChaChaRng {
     fn new() -> io::Result<Self> {
         let mut key = [0u8; CHACHA_KEY_SIZE];
         let mut nonce = [0u8; CHACHA_NONCE_SIZE];
+    
+        let mut os_rng = OsRng;
+        os_rng.try_fill_bytes(&mut key).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        os_rng.try_fill_bytes(&mut nonce).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         
-        OsRng.fill_bytes(&mut key);
-        OsRng.fill_bytes(&mut nonce);
-
+    
         let mut state = [0u32; 16];
         state[0] = 0x61707865;
         state[1] = 0x3320646e; 
         state[2] = 0x79622d32;
         state[3] = 0x6b206574;
-
+    
         for i in 0..8 {
             state[4 + i] = u32::from_le_bytes([
                 key[i * 4],
@@ -70,7 +72,7 @@ impl ChaChaRng {
             ]);
         }
         state[12] = 0;
-
+    
         for i in 0..3 {
             state[13 + i] = u32::from_le_bytes([
                 nonce[i * 4],
@@ -79,13 +81,14 @@ impl ChaChaRng {
                 nonce[i * 4 + 3],
             ]);
         }
-
+    
         Ok(ChaChaRng {
             state,
             output: [0u8; CHACHA_BLOCK_SIZE],
             output_pos: CHACHA_BLOCK_SIZE,
         })
     }
+    
 
     fn quarter_round(state: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize) {
         state[a] = state[a].wrapping_add(state[b]); state[d] ^= state[a]; state[d] = state[d].rotate_left(16);
