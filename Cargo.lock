@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "PIjN_random_module"
-version = "2.3.17"
+version = "2.3.20"
 dependencies = [
  "rand",
  "rand_core",

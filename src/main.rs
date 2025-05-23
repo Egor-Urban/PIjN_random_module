@@ -1,7 +1,7 @@
 /*
 Random string generation module for PIjN proticol project
 Developer: Urban Egor
-Version: 2.3.17 r
+Version: 2.3.20 a
 */
 
 use std::io;
