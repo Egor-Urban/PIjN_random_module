@@ -39,6 +39,7 @@ RandomStringGenerator::new(
     use_uppercase: bool,
     use_spec: bool
 )
+```
 
 ### Method:
 
