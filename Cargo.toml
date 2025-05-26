@@ -1,8 +1,8 @@
 [package]
 name = "PIjN_random_module"
-version = "2.3.20"
+version = "4.5.34"
 edition = "2024"
 
 [dependencies]
-rand = "0.9.1"
-rand_core = "0.9.3"
+rand = "0.8"
+rand_chacha = "0.3"
