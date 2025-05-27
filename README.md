@@ -1,96 +1,111 @@
-# [PIjN] Random data generation and selection module
+# Random Module Microservice (PIjN Protocol)
 
-**Developer:** Urban Egor  
-**Version:** 4.5.38 a
+## Description
 
-This module provides secure random string generation and random selection functionality for the PIjN protocol.
+Microservice for generating random strings and randomly selecting items. Used in the PIjN protocol project.
 
----
+## Metadata
 
-## Features
+* **Developer**: Urban Egor
+* **Server version**: 3.5.21 b
+* **Random module version**: 4.5.38 a
 
-- Cryptographically secure random string generation using a customizable character set.
-- Random selection of items from a list without repetition.
-- Based on `ChaCha20Rng` seeded with system entropy (`OsRng`).
+## Startup
 
----
+The server starts on IP `127.0.0.1` and a port obtained via an HTTP request to `http://127.0.0.1:1030/getport/random_module_microservice`.
 
-## Modules and Structures
+## Endpoints
 
-### `SecureRandom`
+### POST `/generate_random_string`
 
-Internal wrapper over `ChaCha20Rng`:
+Generates a random string.
 
-- `new()`: Initializes with a 32-byte secure random seed.
-- `random_index(max: usize) -> usize`: Returns a random index in `[0, max)`.
-- `sample_indices(len: usize, count: usize) -> Vec<usize>`: Returns unique sample indices.
+#### JSON Parameters:
 
----
-
-### `RandomStringGenerator`
-
-Used to generate a secure random string from a customizable charset.
-
-#### Constructor:
-```rust
-RandomStringGenerator::new(
-    use_digits: bool,
-    use_lowercase: bool,
-    use_uppercase: bool,
-    use_spec: bool
-)
+```json
+{
+  "use_digits": true,
+  "use_lowercase": true,
+  "use_uppercase": false,
+  "use_spec": false,
+  "length": 12
+}
 ```
 
-### Method:
+#### Constraints:
 
-    generate(length: usize) -> String  
-    Generates a string of given length.
+* `length`: 1 to 256
+* At least one character type must be enabled
 
-### Character groups:
+#### Response:
 
-    DIGITS:    0–9  
-    LOWERCASE: a–z  
-    UPPERCASE: A–Z  
-    SPEC:      !@#$%^&*-_=+~><?/
-
----
-
-### RandomSelector<T>
-
-Used to randomly choose a subset of elements from a given list (without replacement).
-
-#### Constructor:
-
-    RandomSelector::new()
-
-#### Method:
-
-    choose(data: &[T], count: usize) -> Vec<T>  
-    T must implement Clone and Debug.
-
----
-
-## Public Functions
-
-### generate_random_string(...) -> String
-
-Wrapper to create and return a random string.  
-Arguments: same as `RandomStringGenerator::new`.
-
-### generate_random_choose<T>(items: Vec<T>, count_of_items: usize) -> Vec<T>
-
-Wrapper to randomly select `count_of_items` elements from `items`.
-
----
-
-## Test Usage (Do not use in production)
-
-```rust
-fn main() {
-    let random_str = generate_random_string(true, true, true, true, 16);
-    println!("[TEST] generate random string: {}", random_str);
-
-    let items = vec![1, 2, 3];
-    let random_select = generate_random_choose(items, 2);
-    println!("[TEST] generate random choose: {:?}", random_select);
+```json
+{
+  "success": true,
+  "data": "aB9f4zL1..."
 }
+```
+
+### POST `/generate_random_choose`
+
+Randomly selects items from a list.
+
+#### JSON Parameters:
+
+```json
+{
+  "items": ["apple", "banana", "cherry"],
+  "count": 2
+}
+```
+
+#### Constraints:
+
+* `count`: 1 to 100 and ≤ length of `items`
+
+#### Response:
+
+```json
+{
+  "success": true,
+  "data": ["banana", "apple"]
+}
+```
+
+## Module `random_module`
+
+### `generate_random_string(...) -> String`
+
+Generates a random string using specified rules.
+
+Parameters:
+
+* `use_digits`: `bool`
+* `use_lowercase`: `bool`
+* `use_uppercase`: `bool`
+* `use_spec`: `bool`
+* `length`: `usize`
+
+### `generate_random_choose(items: Vec<T>, count: usize) -> Vec<T>`
+
+Randomly selects items from the `items` vector.
+
+Constraint: `count ≤ items.len()`
+
+## Logging
+
+All requests and events are logged to `./logs/random_module_microservice_<date>.log` with timestamp, source, and level.
+
+## Libraries Used
+
+* `actix_web`
+* `serde`
+* `rand`, `rand_chacha`
+* `reqwest`
+* `chrono`
+* `once_cell`
+
+## Note
+
+* Confidential data is not stored.
+* The module uses a cryptographically secure RNG: `ChaCha20Rng`.

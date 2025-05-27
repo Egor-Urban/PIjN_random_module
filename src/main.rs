@@ -1,7 +1,7 @@
 /*
 Random data generation and selection microservice for the PIjN protocol project
 Developer: Urban Egor
-Server version: 3.3.14 b
+Server version: 3.5.21 b
 Random module version: 4.5.38 a
 */
 
@@ -11,21 +11,49 @@ use actix_web::{post, web, App, HttpServer, Responder, HttpResponse, middleware:
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use chrono::Local;
+use chrono::{Local, Utc};
 use std::sync::Mutex;
+use std::time::Instant;
+use reqwest;
+use once_cell::sync::Lazy;
 
 mod random_module;
 
 
-
-const MAX_LENGTH: usize = 256;   
+const MAX_LENGTH: usize = 256;
 const MAX_COUNT: usize = 100;
 
 
 
-struct RandomModuleMicroserviceLogger {
+struct LoggerService {
     file: Mutex<std::fs::File>,
 }
+
+
+impl LoggerService {
+    fn new() -> Self {
+        let date = Local::now().format("%d_%m_%Y");
+        fs::create_dir_all("./logs").ok();
+        let file_path = format!("./logs/random_module_microservice_{}.log", date);
+        let file = OpenOptions::new().append(true).create(true).open(file_path)
+            .expect("Failed to open log file");
+
+        Self { file: Mutex::new(file) }
+    }
+
+
+    fn log(&self, source: &str, level: &str, message: &str) {
+        let now = Local::now().format("%d.%m.%Y %H:%M:%S");
+        let entry = format!("[{}][{}][{}] {}\n", now, source, level, message);
+        print!("{}", entry);
+        if let Ok(mut file) = self.file.lock() {
+            let _ = file.write_all(entry.as_bytes());
+        }
+    }
+}
+
+
+static LOGGER: Lazy<LoggerService> = Lazy::new(LoggerService::new);
 
 
 
@@ -39,13 +67,11 @@ struct GenerateParams {
 }
 
 
-
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct ApiResponse<T> {
     success: bool,
     data: T,
 }
-
 
 
 #[derive(Deserialize)]
@@ -56,78 +82,27 @@ struct ChooseParams<T> {
 
 
 
-#[derive(Deserialize)]
-struct Config {
-    port: u16,
-    ip: String,
-}
+// ------------------ Handlers --------------------
 
-
-
-impl RandomModuleMicroserviceLogger {
-    fn new() -> Self {
-        let date_str = Local::now().format("%d_%m_%Y").to_string();
-        let log_dir = "./logs";
-        fs::create_dir_all(log_dir).unwrap_or_else(|e| eprintln!("Failed to create logs directory: {}", e));
-        let file_path = format!("{}/random_module_microservice_{}.log", log_dir, date_str);
-
-        let file = OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(file_path)
-            .expect("Failed to open log file");
-
-        Self {
-            file: Mutex::new(file),
-        }
-    }
-
-
-    fn log(&self, source: &str, level: &str, message: &str) {
-        let now = Local::now().format("%d.%m.%Y %H:%M:%S").to_string();
-        let log_entry = format!("[{}][{}][{}] {}\n", now, source, level, message);
-
-        // Выводим в консоль
-        print!("{}", log_entry);
-
-        if let Ok(mut file) = self.file.lock() {
-            let _ = file.write_all(log_entry.as_bytes());
-        }
-    }
-}
-
-
-static LOGGER: once_cell::sync::Lazy<RandomModuleMicroserviceLogger> = once_cell::sync::Lazy::new(RandomModuleMicroserviceLogger::new);
-
-
-
-// Endpoints
 #[post("/generate_random_string")]
 async fn generate_handler(req: HttpRequest, params: web::Json<GenerateParams>) -> impl Responder {
-    let peer_addr = req.peer_addr()
-        .map(|addr| addr.to_string())
-        .unwrap_or_else(|| "Unknown".to_string());
-
-    LOGGER.log("generate_string_handler", "INFO", &format!("Request from: {}", peer_addr));
+    let start = Instant::now();
+    let peer = req.peer_addr().map(|a| a.to_string()).unwrap_or("Unknown".to_string());
+    LOGGER.log("generate_string_handler", "INFO", &format!("Request from: {}", peer));
 
     if params.length == 0 || params.length > MAX_LENGTH {
-        let msg = format!("Invalid length: {}. Must be between 1 and {}", params.length, MAX_LENGTH);
+        let msg = format!("Invalid length: {} (must be 1–{})", params.length, MAX_LENGTH);
         LOGGER.log("generate_string_handler", "WARN", &msg);
-        return HttpResponse::BadRequest().json(ApiResponse {
-            success: false,
-            data: msg,
-        });
-    }
-    if !params.use_digits && !params.use_lowercase && !params.use_uppercase && !params.use_spec {
-        let msg = "At least one character set must be enabled (digits, lowercase, uppercase, special).";
-        LOGGER.log("generate_string_handler", "WARN", msg);
-        return HttpResponse::BadRequest().json(ApiResponse {
-            success: false,
-            data: msg.to_string(),
-        });
+        return HttpResponse::BadRequest().json(ApiResponse { success: false, data: msg });
     }
 
-    match std::panic::catch_unwind(|| {
+    if !(params.use_digits || params.use_lowercase || params.use_uppercase || params.use_spec) {
+        let msg = "At least one charset must be enabled (digits, lowercase, uppercase, special).";
+        LOGGER.log("generate_string_handler", "WARN", msg);
+        return HttpResponse::BadRequest().json(ApiResponse { success: false, data: msg.to_string() });
+    }
+
+    let result = std::panic::catch_unwind(|| {
         random_module::generate_random_string(
             params.use_digits,
             params.use_lowercase,
@@ -135,92 +110,126 @@ async fn generate_handler(req: HttpRequest, params: web::Json<GenerateParams>) -
             params.use_spec,
             params.length,
         )
-    }) {
-        Ok(result) => {
-            LOGGER.log("generate_string_handler", "INFO", "Generated random string successfully.");
-            HttpResponse::Ok().json(ApiResponse {
-                success: true,
-                data: result,
-            })
+    });
+
+    match result {
+        Ok(output) => {
+            let duration = start.elapsed();
+            LOGGER.log("generate_string_handler", "INFO", &format!("Success in {:?}.", duration));
+            HttpResponse::Ok().json(ApiResponse { success: true, data: output })
         }
-        Err(e) => {
-            LOGGER.log("generate_string_handler", "ERROR", &format!("Failed to generate random string: {:?}", e));
-            HttpResponse::InternalServerError().json(ApiResponse {
-                success: false,
-                data: "Internal server error".to_string(),
-            })
+        Err(_) => {
+            LOGGER.log("generate_string_handler", "ERROR", "Generation panic occurred");
+            HttpResponse::InternalServerError().json(ApiResponse { success: false, data: "Internal server error".to_string() })
         }
     }
 }
+
 
 
 #[post("/generate_random_choose")]
 async fn choose_handler(req: HttpRequest, params: web::Json<ChooseParams<String>>) -> impl Responder {
-    let peer_addr = req.peer_addr()
-        .map(|addr| addr.to_string())
-        .unwrap_or_else(|| "Unknown".to_string());
-
-    LOGGER.log("generate_choose_handler", "INFO", &format!("Request from: {}", peer_addr));
+    let start = Instant::now();
+    let peer = req.peer_addr().map(|a| a.to_string()).unwrap_or("Unknown".to_string());
+    LOGGER.log("generate_choose_handler", "INFO", &format!("Request from: {}", peer));
 
     if params.count == 0 || params.count > MAX_COUNT {
-        let msg = format!("Invalid count: {}. Must be between 1 and {}", params.count, MAX_COUNT);
+        let msg = format!("Invalid count: {} (must be 1–{})", params.count, MAX_COUNT);
         LOGGER.log("generate_choose_handler", "WARN", &msg);
-        return HttpResponse::BadRequest().json(ApiResponse {
-            success: false,
-            data: msg,
-        });
+        return HttpResponse::BadRequest().json(ApiResponse { success: false, data: msg });
     }
 
     if params.count > params.items.len() {
-        let msg = "Count must be less than or equal to number of items.";
+        let msg = "Count must be <= item count.";
         LOGGER.log("generate_choose_handler", "WARN", msg);
-        return HttpResponse::BadRequest().json(ApiResponse {
-            success: false,
-            data: msg.to_string(),
-        });
+        return HttpResponse::BadRequest().json(ApiResponse { success: false, data: msg.to_string() });
     }
 
-    match std::panic::catch_unwind(|| {
+    let result = std::panic::catch_unwind(|| {
         random_module::generate_random_choose(params.items.clone(), params.count)
-    }) {
+    });
+
+    match result {
         Ok(selected) => {
-            LOGGER.log("generate_choose_handler", "INFO", "Random choose successful.");
-            HttpResponse::Ok().json(ApiResponse {
-                success: true,
-                data: selected,
-            })
+            let duration = start.elapsed();
+            LOGGER.log("generate_choose_handler", "INFO", &format!("Success in {:?}.", duration));
+            HttpResponse::Ok().json(ApiResponse { success: true, data: selected })
         }
-        Err(e) => {
-            LOGGER.log("generate_choose_handler", "ERROR", &format!("Failed to randomly choose items: {:?}", e));
-            HttpResponse::InternalServerError().json(ApiResponse {
-                success: false,
-                data: "Internal server error".to_string(),
-            })
+        Err(_) => {
+            LOGGER.log("generate_choose_handler", "ERROR", "Random choose panic occurred");
+            HttpResponse::InternalServerError().json(ApiResponse { success: false, data: "Internal server error".to_string() })
         }
     }
 }
 
 
 
+// ------------------ Main --------------------
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let config_content = fs::read_to_string("config.json")
-        .expect("Failed to read config.json");
-    let config: Config = serde_json::from_str(&config_content)
-        .expect("Failed to parse config.json");
+    let Some(port) = fetch_port().await else {
+        LOGGER.log("main", "ERROR", "Cant ger port. Cant start random data module");
+        std::process::exit(1);
+    };
 
-    LOGGER.log("main", "INFO", &format!("Random module microservice server is starting on {}:{}", config.ip, config.port));
-    LOGGER.log("main", "INFO", &format!("Random module microservice version: 3.3.14 b"));
-    LOGGER.log("security", "INFO", &format!("To ensure confidentiality, randomly generated data is not saved"));
+    let ip = "127.0.0.1";
+
+    LOGGER.log("main", "INFO", &format!("Запуск сервера на {}:{}", ip, port));
+    LOGGER.log("main", "INFO", "Random module microservice version: 3.5.21 b");
+    LOGGER.log("security", "INFO", "Cant saving confiderncial random data");
 
     HttpServer::new(|| {
         App::new()
             .wrap(Logger::default())
             .service(generate_handler)
             .service(choose_handler)
-    })
+    })   
     .workers(4)
-    .bind((config.ip.as_str(), config.port))?  
+    .bind((ip, port))?
     .run()
     .await
 }
+
+
+
+
+async fn fetch_port() -> Option<u16> {
+    let url = "http://127.0.0.1:1030/getport/random_module_microservice";
+    LOGGER.log("port_resolver", "INFO", &format!("Requesting port for microservice from {}", url));
+
+    match reqwest::get(url).await {
+        Ok(resp) => { 
+            let status = resp.status();
+            if status.is_success() {
+                match resp.json::<ApiResponse<serde_json::Value>>().await {
+                    Ok(json) => {
+                        if json.success {
+                            if let Some(port_val) = json.data.as_u64() {
+                                let port = port_val as u16;
+                                LOGGER.log("port_resolver", "INFO", &format!("Requested port: {}", port));
+                                return Some(port);
+                            } else {
+                                LOGGER.log("port_resolver", "ERROR", "Cant get port from data");
+                            }
+                        } else {
+                            LOGGER.log("port_resolver", "WARN", &format!("Server returns error: {:?}", json.data));
+                        }
+                    }
+                    Err(e) => {
+                        LOGGER.log("port_resolver", "ERROR", &format!("Error with reading JSON: {}", e));
+                    }
+                }
+            } else {
+                LOGGER.log("port_resolver", "WARN", &format!("Port manager responding with error {}", status));
+            }
+        } 
+        Err(e) => {
+            LOGGER.log("port_resolver", "ERROR", &format!("Error with request data from port manager: {}", e));
+        }
+    }
+
+    LOGGER.log("port_resolver", "INFO", "Cant start random data module");
+    None
+}
+
