@@ -7,7 +7,7 @@ Microservice for generating random strings and randomly selecting items. Used in
 ## Metadata
 
 * **Developer**: Urban Egor
-* **Server version**: 3.5.21 b
+* **Server version**: 3.6.21 b
 * **Random module version**: 4.5.38 a
 
 ## Startup

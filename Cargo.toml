@@ -1,6 +1,6 @@
 [package]
 name = "PIjN_random_module"
-version = "3.5.21"
+version = "3.6.21"
 edition = "2024"
 
 [dependencies]

@@ -1,17 +1,17 @@
 /*
 Random data generation and selection microservice for the PIjN protocol project
 Developer: Urban Egor
-Server version: 3.5.21 b
+Server version: 3.6.21 b
 Random module version: 4.5.38 a
 */
 
 
 
-use actix_web::{post, web, App, HttpServer, Responder, HttpResponse, middleware::Logger, HttpRequest};
+use actix_web::{post, get, web, App, HttpServer, Responder, HttpResponse, middleware::Logger, HttpRequest};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use chrono::{Local, Utc};
+use chrono::{Local};
 use std::sync::Mutex;
 use std::time::Instant;
 use reqwest;
@@ -163,6 +163,18 @@ async fn choose_handler(req: HttpRequest, params: web::Json<ChooseParams<String>
 }
 
 
+#[get("/status")]
+async fn get_module_status(req: HttpRequest) -> impl Responder {
+    let client_addr = req.peer_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_else(|| "Unknown".to_string());
+
+
+        LOGGER.log("get_module_status", "INFO", &format!("Client {} get status", client_addr));
+        HttpResponse::Ok().json(serde_json::json!({ "success": true, "data": null }))
+}
+
+
 
 // ------------------ Main --------------------
 
@@ -175,8 +187,8 @@ async fn main() -> std::io::Result<()> {
 
     let ip = "127.0.0.1";
 
-    LOGGER.log("main", "INFO", &format!("Запуск сервера на {}:{}", ip, port));
-    LOGGER.log("main", "INFO", "Random module microservice version: 3.5.21 b");
+    LOGGER.log("main", "INFO", &format!("Stаrt random module microservice server on {}:{}", ip, port));
+    LOGGER.log("main", "INFO", "Random module microservice version: 3.6.21 b");
     LOGGER.log("security", "INFO", "Cant saving confiderncial random data");
 
     HttpServer::new(|| {
@@ -184,6 +196,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(Logger::default())
             .service(generate_handler)
             .service(choose_handler)
+            .service(get_module_status)
     })   
     .workers(4)
     .bind((ip, port))?
