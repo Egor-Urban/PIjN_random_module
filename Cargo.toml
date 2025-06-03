@@ -14,3 +14,5 @@ rand_chacha = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "time"] }
 serde_json = "1.0"
+sysinfo = "0.35.1" 
+tokio = { version = "1.38", features = ["time"] }

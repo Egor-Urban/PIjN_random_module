@@ -1,11 +1,3 @@
-/*
-Random data generation and selection module for the PIjN protocol project
-Developer: Urban Egor
-Version: 4.5.38 a
-*/
-
-
-
 use rand::{rngs::OsRng, RngCore, SeedableRng, seq::index::sample, distributions::{Uniform, Distribution}};
 use rand_chacha::ChaCha20Rng;
 use std::fmt::Debug;

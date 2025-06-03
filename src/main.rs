@@ -1,25 +1,23 @@
-/*
-Random data generation and selection microservice for the PIjN protocol project
-Developer: Urban Egor
-Server version: 3.7.30 a
-Random module version: 4.5.38 a
-*/
-
-
-
-use actix_web::{post, get, web, App, HttpServer, Responder, HttpResponse, middleware::Logger, HttpRequest};
+use actix_web::{post, get, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use serde::{Deserialize, Serialize};
 use serde_json;
-use chrono::Local;
 use std::time::Instant;
-use reqwest;
-use tracing::{info, warn, error};
-use tracing_subscriber;
+use tokio::time::Duration;
+use tracing::{error, info, warn};
 
+mod status;
+mod utils;
 mod random_module;
+
+use status::get_status;
+use utils::{fetch_port, init_tracing, load_config};
+
+
 
 const MAX_LENGTH: usize = 256;
 const MAX_COUNT: usize = 100;
+
+
 
 #[derive(Deserialize)]
 struct GenerateParams {
@@ -30,11 +28,13 @@ struct GenerateParams {
     length: usize,
 }
 
+
 #[derive(Serialize, Deserialize)]
 struct ApiResponse<T> {
     success: bool,
     data: T,
 }
+
 
 #[derive(Deserialize)]
 struct ChooseParams<T> {
@@ -42,7 +42,35 @@ struct ChooseParams<T> {
     count: usize,
 }
 
-// ------------------ Handlers --------------------
+
+
+#[get("/status")]
+async fn status_handler(start: web::Data<Instant>, req: HttpRequest) -> impl Responder {
+    let client_addr = req
+        .peer_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_else(|| "Unknown".to_string());
+    let status_json = get_status(*start.get_ref());
+    let status = serde_json::json!({ "success": true, "data": status_json });
+
+    info!(target: "status_handler", "Client {} requested status: {}", client_addr, status);
+
+    HttpResponse::Ok().json(status)
+}
+
+
+#[get("/stop")]
+async fn stop_handler() -> impl Responder {
+    info!(target: "control", "Received /stop request. Exiting...");
+
+    tokio::spawn(async {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        std::process::exit(0);
+    });
+
+    HttpResponse::Ok().json(serde_json::json!({ "success": true, "data": null }))
+}
+
 
 #[post("/generate_random_string")]
 async fn generate_handler(req: HttpRequest, params: web::Json<GenerateParams>) -> impl Responder {
@@ -85,6 +113,7 @@ async fn generate_handler(req: HttpRequest, params: web::Json<GenerateParams>) -
     }
 }
 
+
 #[post("/generate_random_choose")]
 async fn choose_handler(req: HttpRequest, params: web::Json<ChooseParams<String>>) -> impl Responder {
     let start = Instant::now();
@@ -120,91 +149,35 @@ async fn choose_handler(req: HttpRequest, params: web::Json<ChooseParams<String>
     }
 }
 
-#[get("/status")]
-async fn get_module_status(req: HttpRequest) -> impl Responder {
-    let client_addr = req.peer_addr()
-        .map(|a| a.to_string())
-        .unwrap_or_else(|| "Unknown".to_string());
 
-    info!(target: "status_handler", "Client {} requested status", client_addr);
-    HttpResponse::Ok().json(serde_json::json!({ "success": true, "data": null }))
-}
-
-// ------------------ Main --------------------
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    init_tracing();
+    let start = Instant::now();
+    let start_data = web::Data::new(start);
+    let config = load_config();
 
-    let Some(port) = fetch_port().await else {
-        error!(target: "main", "Can't get port. Random data module won't start.");
+    init_tracing(&config.logs_dir, &config.name_for_port_manager);
+
+    let Some(port) = fetch_port(&config).await else {
+        error!(target: "main", "Failed to retrieve port. {} will not start.", &config.name_for_port_manager);
         std::process::exit(1);
     };
 
-    let ip = "127.0.0.1";
+    //let port = 1045;
 
-    info!(target: "main", "Starting random module microservice on {}:{}", ip, port);
-    info!(target: "main", "Version: 3.6.21 b / Random module version: 4.5.38 a");
+    let ip = config.ip.clone();
 
-    HttpServer::new(|| {
+    info!(target: "main", "Starting {} on {}:{}", &config.name_for_port_manager, ip, port);
+
+    HttpServer::new(move || {
         App::new()
-            .wrap(Logger::default())
-            .service(generate_handler)
-            .service(choose_handler)
-            .service(get_module_status)
+            .app_data(start_data.clone())
+            .service(status_handler)
+            .service(stop_handler)
     })
-    .workers(4)
-    .bind((ip, port))?
+    .workers(config.workers_count)
+    .bind((ip.as_str(), port))?
     .run()
     .await
-}
-
-async fn fetch_port() -> Option<u16> {
-    let url = "http://127.0.0.1:1030/getport/random_module_microservice";
-    info!(target: "port_resolver", "Requesting port from {}", url);
-
-    match reqwest::get(url).await {
-        Ok(resp) => {
-            if resp.status().is_success() {
-                match resp.json::<ApiResponse<serde_json::Value>>().await {
-                    Ok(json) => {
-                        if json.success {
-                            if let Some(port_val) = json.data.as_u64() {
-                                let port = port_val as u16;
-                                info!(target: "port_resolver", "Got port: {}", port);
-                                return Some(port);
-                            } else {
-                                error!(target: "port_resolver", "No port in response data");
-                            }
-                        } else {
-                            warn!(target: "port_resolver", "Error from server: {:?}", json.data);
-                        }
-                    }
-                    Err(e) => error!(target: "port_resolver", "JSON parse error: {}", e),
-                }
-            } else {
-                warn!(target: "port_resolver", "Response status: {}", resp.status());
-            }
-        }
-        Err(e) => error!(target: "port_resolver", "Request error: {}", e),
-    }
-
-    None
-}
-
-fn init_tracing() {
-    let date = Local::now().format("%d_%m_%Y").to_string();
-    let log_path = format!("./logs/random_module_microservice_{}.log", date);
-    std::fs::create_dir_all("./logs").ok();
-
-    tracing_subscriber::fmt()
-        .with_target(true)
-        .with_writer(std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(log_path)
-            .expect("Cannot open log file"))
-        .with_thread_names(true)
-        .with_ansi(false)
-        .init();
 }

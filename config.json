@@ -1,4 +1,9 @@
 {
-    "port": 1026,
-    "ip": "127.0.0.1"
+    "ip": "127.0.0.1",
+    "port_manager_ip": "127.0.0.1",
+    "port_manager_port": "1030", 
+    "port_manager_endpoint": "getport",
+    "name_for_port_manager": "random_module_microservice",
+    "logs_dir": "./logs",
+    "workers_count": 4
 }
