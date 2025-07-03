@@ -1,5 +1,4 @@
 {
-    "ip": "127.0.0.1",
     "port_manager_ip": "127.0.0.1",
     "port_manager_port": "1030", 
     "port_manager_endpoint": "getport",

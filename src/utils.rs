@@ -1,15 +1,17 @@
 use chrono::Local;
 use serde::Deserialize;
-use serde_json;
 use std::fs;
 use tracing::{error, info, warn};
 use tracing_subscriber;
 use reqwest;
 use tokio::time::{sleep, Duration};
+use serde_json::json;
+use std::net::{UdpSocket, IpAddr};
+
+
 
 #[derive(Deserialize, Clone)]
 pub struct Config {
-    pub ip: String,
     pub port_manager_ip: String,
     pub port_manager_port: String,
     pub port_manager_endpoint: String,
@@ -18,17 +20,29 @@ pub struct Config {
     pub workers_count: usize
 }
 
-#[derive(serde::Deserialize)]
+
+#[derive(Deserialize)]
 struct ApiResponse<T> {
     success: bool,
     data: T,
 }
+
+
+
+pub fn get_local_ip() -> Option<IpAddr> {
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    let local_addr = socket.local_addr().ok()?;
+    Some(local_addr.ip())
+}
+
 
 pub fn load_config() -> Config {
     let config_path = "config.json";
     let config_data = fs::read_to_string(config_path).expect("Can't read config.json");
     serde_json::from_str(&config_data).expect("Can't parse config.json")
 }
+
 
 pub fn init_tracing(logs_dir: &str, log_name: &str) {
     let date = Local::now().format("%d_%m_%Y").to_string();
@@ -56,19 +70,34 @@ pub fn init_tracing(logs_dir: &str, log_name: &str) {
         .init();
 }
 
+
 pub async fn fetch_port(config: &Config) -> Option<u16> {
     let url = format!(
-        "http://{}:{}/{}/{}",
+        "http://{}:{}/{}",
         config.port_manager_ip,
         config.port_manager_port,
-        config.port_manager_endpoint,
-        config.name_for_port_manager
+        config.port_manager_endpoint
     );
 
-    for attempt in 1..=3 {
-        info!(target: "port_resolver", "Attempt {}: Requesting port from {}", attempt, url);
+    let local_ip = get_local_ip().unwrap_or_else(|| {
+        error!(target: "port_resolver", "Failed to determine local IP, using 127.0.0.1 as fallback");
+        IpAddr::V4(std::net::Ipv4Addr::new(127,0,0,1))
+    });
 
-        match reqwest::get(&url).await {
+    let body = json!({
+        "ip": local_ip.to_string(),
+        "service_name": config.name_for_port_manager
+    });
+
+    for attempt in 1..=3 {
+        info!(target: "port_resolver", "Attempt {}: Requesting port from {} with body {:?}", attempt, url, body);
+
+        match reqwest::Client::new()
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+        {
             Ok(resp) => {
                 if resp.status().is_success() {
                     match resp.json::<ApiResponse<serde_json::Value>>().await {
@@ -99,6 +128,7 @@ pub async fn fetch_port(config: &Config) -> Option<u16> {
                 }
             }
         }
+
         sleep(Duration::from_secs(1)).await;
     }
 

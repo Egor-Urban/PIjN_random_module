@@ -7,11 +7,11 @@ Microservice for generating random strings and randomly selecting items. Used in
 ## Metadata
 
 * **Developer**: Urban Egor
-* **Random module version**: 4.5.38 a
+* **Random module version**: 5.7.44 r
 
 ## Startup
 
-The server starts on IP `127.0.0.1` and a port obtained via an HTTP request to `http://127.0.0.1:1030/getport/random_module_microservice`.
+The server starts on IP `0.0.0.0` and a port obtained via an HTTP request to `http://127.0.0.1:1030/getport/random_module_microservice`.
 
 ## Endpoints
 
